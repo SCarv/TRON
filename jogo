@@ -1,0 +1,909 @@
+; Projecto de IAC, jogo Tron
+; SERGIO CARVALHO, 81513
+
+; Todas as coordenadas do programa são inicialmente descritas em termos da janela de texto. Existe uma rotina que as converte para uma posicao de memoria correspondente.
+
+;####################
+;PARTE 1, CONSTANTES#
+;####################
+
+; CONSTANTES DE CONTROLO DO HARDWARE
+SP_INICIAL		EQU		FDFFh
+MASCARAS		EQU		FFFAh					; Endereco das mascaras de interrupcao.
+M_1				EQU		0000000000000010b		; Interrupcao I1, utilizada para comecar o jogo.
+M_JOGO			EQU		1000101010000001b		; Interrupcoes activas no decorrer de uma partida: I0, I7, I9, IB, IF (temporizador).
+M_VERIFICACAO	EQU		1000000000000000b
+;CONSTANTES DE POSICAO
+POS_MSG_INI_1	EQU		0C20h					; Posicao da mensagem "Bem-vindo ao Tron".
+POS_MSG_INI_2	EQU		0D1Ch					; Posicao da mensagem "Pressione I1 para comecar".
+POS_INI_AV1		EQU		0C18h					; Posicao inicial do avatar do jogador 1.
+POS_INI_AV2		EQU		0C38h					; Posicao inicial do avatar do jogador 2.
+POS_MSG_FIN_1	EQU		0C23h
+POS_MSG_FIN_2	EQU		0D1Ch
+;CONSTANTES DE ENDERECO DE MEMORIA
+P_JAN_CONT		EQU		FFFCh					; Endereco do porto de controlo da janela de texto.
+P_JAN_ESCR		EQU		FFFEh					; Endereco do porto de escrita da janela de texto.
+P_LCD_CONT		EQU		FFF4h					; Endereco do porto de controlo do LCD.
+P_LCD_ESCR		EQU		FFF5h					; Endereco do porto escrita do LCD.
+P_TEMP_UNI		EQU 	FFF6h					; Endereco do porto de controlo do temporizador, onde se colocam as unidades a contar.
+												; Nota: este programa utiliza sempre 1 unidade neste porto (100 ms).
+P_TEMP_ACT		EQU 	FFF7h					; Endereco que activa o temporizador quando escrito com 1.
+DISPLAY1		EQU		FFF0h
+DISPLAY2		EQU		FFF1h
+DISPLAY3		EQU		FFF2h
+DISPLAY4		EQU		FFF3h
+LEDS			EQU		FFF8h					; Endereco dos LEDS
+LCD_s_1			EQU		800Eh
+LCD_s_2			EQU		800Dh
+LCD_s_3			EQU		800Ch
+LCD_s_4			EQU		800Bh
+LCD_P1_1		EQU		8015h
+LCD_P1_2		EQU		8014h
+LCD_P2_1		EQU		801Fh
+LCD_P2_2		EQU		801Eh
+FIM_TEXTO		EQU		'*'						; Este carater indica o final de todas as strings neste programa.
+
+;CONSTANTES DE ENDERECO DE JANELA DE TEXTO
+CANTO_SUPESQ	EQU		010Fh					; Endereco do canto superior esquerdo da moldura de jogo.
+CANTO_SUPDIR	EQU		0141h					; " canto superior direito "
+CANTO_INFESQ	EQU		160Fh					; " canto inferior esquerdo "
+CANTO_INFDIR	EQU		1641h					; " canto inferior direito "
+MUDA_LINHA		EQU		0100h					; Este valor desce o cursor da janela de texto uma linha quando somado a uma coordenada da janela
+												; " sobe o cursor da janela de texto uma linha quando subtraido a uma coordenada da janela
+
+;CONSTANTES GRAFICAS
+CAR_CANTO		EQU		'+'						; Carater que marca os cantos da moldura.
+CAR_LINHA		EQU		'-'						; Carater que marca as paredes de cima e de baixo da moldura.
+CAR_COLUNA		EQU		'|'						; Carater que marca as paredes de de lado da moldura.
+AVATAR1			EQU		'#'						; Caracter que representa o jogador 1.
+AVATAR2			EQU		'@'						; Caracter que representa o jogador 2.
+
+;CONSTANTES DE JOGO
+DIREITA			EQU		000Ah					; Este valor e uma escolha arbitraria. Quando este valor e escrito em M[DIR_PLAYER<1,2>], o programa reconhece
+												; que a cada ciclo de relogio deve incrementar a coordenada actual do avatar em questao.
+BAIXO			EQU		00A0h					; "" deve somar MUDA_LINHA a coordenada ""
+ESQUERDA		EQU		0A00h					; "" deve decrementar a coordenada	""
+CIMA			EQU		A000h					; "" deve subtrair MUDA_LINHA a coordenada ""
+PERIODO_1		EQU		0007d
+PERIODO_2		EQU		0005d
+PERIODO_3		EQU		0003d
+PERIODO_4		EQU		0002d
+PERIODO_5		EQU		0001d
+
+ESPACO			EQU		' '
+
+
+
+
+;####################
+;PARTE 2 - VARIAVEIS#
+;####################
+				ORIG 	8000h
+MATRIZ			TAB		1920d				; 1920 e o numero de celulas da janela de texto. E utilizada somente para detetar colisoes no jogo. 
+;VARIAVEIS DE MENSAGEM
+
+MSG_INI_1		STR		'Bem-vindo ao Tron*'
+MSG_INI_2		STR		'Pressione I1 para comecar*'
+MSG_FIN_1		STR		'Fim do jogo*'
+MSG_FIN_2		STR		'Pressione I1 para recomecar*'
+LCD_T			STR		'TEMPO MAX: 0000sP1: 00    P2: 00*'	; Template que e escrito no LCD, no inicio do programa. 
+
+;VARIAVEIS CONTROLADAS DIRETAMENTE POR INTERRUPCOES
+P1_FLAG_ESQ		WORD	0000h
+P1_FLAG_DRT		WORD	0000h
+P1_FLAG_NON		WORD	0001h
+P2_FLAG_ESQ		WORD	0000h
+P2_FLAG_DRT		WORD	0000h
+P2_FLAG_NON		WORD	0001h
+FLAG_I1			WORD	0000d								; Sinaliza que algum jogador pressionou I1 e o jogo pode comecar
+SEGUNDO			WORD	0010d								; Esta posicao de memoria conta um segundo.
+CONTADOR_TICK	WORD	0007d
+VALOR_TICK		WORD	0007d
+CONTADOR_NIV	WORD	0010d
+;VARIAVEIS DE CONTROLO DO JOGO
+VALOR_DISPLAY1	WORD	0000d
+VALOR_DISPLAY2	WORD	0000d
+VALOR_DISPLAY3	WORD	0000d
+VALOR_DISPLAY4	WORD	0000d
+VALOR_LCD1		WORD	0000d
+VALOR_LCD2		WORD	0000d
+VALOR_LCD3		WORD	0000d
+VALOR_LCD4		WORD	0000d
+VITORIAS_P1_1	WORD	0000h
+VITORIAS_P1_2	WORD	0000h
+VITORIAS_P2_1	WORD	0000h
+VITORIAS_P2_2	WORD	0000h
+FLAG_NIVEL_1	WORD	0001h
+FLAG_NIVEL_2	WORD	0000h
+FLAG_NIVEL_3	WORD	0000h
+FLAG_NIVEL_4	WORD	0000h
+FLAG_NIVEL_5	WORD	0000h
+P1_FLAG_COLISAO	WORD	0000h
+P2_FLAG_COLISAO	WORD	0000h
+;#################################
+;PARTE 3 - TABELA DE INTERRUPCOES#
+;#################################
+
+				ORIG	FE01h
+INT1			WORD	Start
+				ORIG	FE00h
+INT0			WORD	P1_escolhe_esq
+				ORIG	FE0Ah
+INT10			WORD	P1_escolhe_non
+				ORIG	FE0Bh
+INT11			WORD	P1_escolhe_drt
+				ORIG	FE07h
+INT7			WORD	P2_escolhe_esq
+				ORIG	FE08h
+INT8			WORD	P2_escolhe_non
+				ORIG	FE09h
+INT9			WORD	P2_escolhe_drt
+				ORIG	FE0Fh
+INT15			WORD	Conta_cem_ms
+
+;#################
+;PARTE 4 - CODIGO#
+;#################
+;Inicializacao: Primeira parte do programa que so e executada uma vez, apos correr o programa.
+				ORIG	0000h
+Inicializacao:	MOV		R1, SP_INICIAL
+				MOV		SP, R1
+				MOV		R2, FFFFh					;Inicializa o porto de controlo da escrita.
+				MOV		M[P_JAN_CONT], R2
+				
+				PUSH	POS_MSG_INI_1
+				PUSH	MSG_INI_1
+				CALL	WRstrJAN
+				PUSH	POS_MSG_INI_2
+				PUSH	MSG_INI_2
+				CALL	WRstrJAN
+				MOV		R1, LCD_T
+				MOV		R2, FIM_TEXTO
+				MOV		R3, 8000h			;R3 sera um apontador para a posicao do LCD em que escrever. O '8' activa o LCD.
+				CALL	WRLCD_T
+				JMP		Mestre
+
+TRON:			MOV		R1,	POS_INI_AV1				;Posicao inicial do player1
+				MOV		R2, POS_INI_AV2				;Posicao inicial do player2
+				MOV		R3, DIREITA					;Direccao inicial do player1
+				MOV		R4, ESQUERDA				;Direccao inicial do player2
+				MOV		R5,	R0						;Registo utilizado pela rotina Colisoes
+				MOV		R6,	R0						;Registo utilizado pela rotina Colisoes
+				MOV		R7, R0						;Registo utilizado pela rotina Inc_velocidade
+Tick_start:		CMP		R0, M[CONTADOR_TICK]
+				JMP.NZ	Segundo
+				MOV		R7, M_VERIFICACAO
+				MOV		M[MASCARAS], R7
+				MOV		R7,	M[VALOR_TICK]
+				MOV		M[CONTADOR_TICK], R7
+				CALL	Atualiza_POS_P1
+				CALL	Atualiza_POS_P2
+				CALL	Colisoes
+				CMP		M[P1_FLAG_COLISAO], R0
+				JMP.NZ	Houve_colisao
+				CMP		M[P2_FLAG_COLISAO], R0
+				JMP.NZ	Houve_colisao
+				MOV		M[P1_FLAG_ESQ], R0
+				MOV		M[P1_FLAG_DRT], R0
+				MOV		M[P2_FLAG_ESQ], R0
+				MOV		M[P2_FLAG_DRT], R0
+				INC		M[P1_FLAG_NON]
+				INC		M[P2_FLAG_NON]
+				MOV		R7, M_JOGO
+				MOV		M[MASCARAS], R7
+				PUSH	R1
+				PUSH	AVATAR1
+				CALL	WRcarJAN
+				PUSH	R2
+				PUSH	AVATAR2
+				CALL	WRcarJAN
+Segundo:		CMP		R0, M[SEGUNDO]
+				CALL.Z	Atualiza_cron
+				CMP		R0, M[CONTADOR_NIV]
+				CALL.Z	Inc_velocidade
+Tick_end:		JMP		Tick_start
+Houve_colisao:	DSI
+				MOV		M[P_TEMP_UNI], R0
+				MOV 	M[P_TEMP_ACT], R0
+				RET
+
+;ROTINA Atualiza_POS_P1: Le a ultima direccao activada pelo jogador e actualiza a direccao do jogador em concordancia utilizando as funcoes de movimento relativo e absoluto.
+;		Entradas: R1 = posicao actual do jogador 1; R3 = posicao actual do jogador 1
+;		Saidas: ---
+;		Efeitos: ---
+Atualiza_POS_P1:CMP		M[P1_FLAG_NON], R0
+				CALL.NZ	P1_mantem
+				CMP		M[P1_FLAG_ESQ], R0
+				CALL.NZ	P1_esq_rel
+				CMP		M[P1_FLAG_DRT], R0
+				CALL.NZ	P1_drt_rel
+				RET
+
+;ROTINA Atualiza_POS_P2: Le a ultima direccao activada pelo jogador e actualiza a direccao do jogador em concordancia utilizando as funcoes de movimento relativo e absoluto.
+;		Entradas: R2 = posicao actual do jogador 2; R4 = posicao actual do jogador 2
+;		Saidas: ---
+;		Efeitos: ---
+Atualiza_POS_P2:CMP		M[P2_FLAG_NON], R0
+				CALL.NZ	P2_mantem
+				CMP		M[P2_FLAG_ESQ], R0
+				CALL.NZ	P2_esq_rel
+				CMP		M[P2_FLAG_DRT], R0
+				CALL.NZ	P2_drt_rel 
+				RET
+
+;ROTINAS  P<1|2>_<drt|esq>_rel:  Comparam a direccao actual dos avatares com a direccao pedida pelos jogadores e chama a rotina de movimento absoluto apropriada
+;para a direccao actual.
+;		Entradas: R<1|2> = posicao actual do jogador <1|2>; R<3|4> = posicao actual do jogador <1|2>
+;		Saidas: ---
+;		Efeitos: Efectivam a ultima direccao pedida pelo jogador.
+P1_mantem:		CMP		R3, DIREITA
+				CALL.Z	P1_drt_abs
+				CMP		R3, BAIXO
+				CALL.Z	P1_baixo_abs
+				CMP		R3, ESQUERDA
+				CALL.Z	P1_esq_abs
+				CMP		R3, CIMA
+				CALL.Z	P1_cima_abs
+				RET
+P1_esq_rel:		CMP		R3, DIREITA
+				CALL.Z	P1_cima_abs
+				CMP		R3, BAIXO
+				CALL.Z	P1_esq_abs
+				CMP		R3, ESQUERDA
+				CALL.Z	P1_baixo_abs
+				CMP		R3, CIMA
+				CALL.Z	P1_esq_abs
+				RET
+P1_drt_rel:		CMP		R3, DIREITA
+				CALL.Z	P1_baixo_abs
+				CMP		R3, BAIXO
+				CALL.Z	P1_drt_abs
+				CMP		R3, ESQUERDA
+				CALL.Z	P1_cima_abs
+				CMP		R3, CIMA
+				CALL.Z	P1_drt_abs
+				RET
+P2_mantem:		CMP		R4, DIREITA
+				CALL.Z	P2_drt_abs
+				CMP		R4, BAIXO
+				CALL.Z	P2_baixo_abs
+				CMP		R4, ESQUERDA
+				CALL.Z	P2_esq_abs
+				CMP		R4, CIMA
+				CALL.Z	P2_cima_abs
+				RET
+P2_esq_rel:		CMP		R4, DIREITA
+				CALL.Z	P2_cima_abs
+				CMP		R4, BAIXO
+				CALL.Z	P2_esq_abs
+				CMP		R4, ESQUERDA
+				CALL.Z	P2_baixo_abs
+				CMP		R4, CIMA
+				CALL.Z	P2_esq_abs
+				RET
+P2_drt_rel:		CMP		R4, DIREITA
+				CALL.Z	P2_baixo_abs
+				CMP		R4, BAIXO
+				CALL.Z	P2_drt_abs
+				CMP		R4, ESQUERDA
+				CALL.Z	P2_cima_abs
+				CMP		R4, CIMA
+				CALL.Z	P2_drt_abs
+				RET
+
+;ROTINAS  P<1|2>_<drt|baixo|esq|cima|>_abs:  Atualiza a direccao do jogador 1 ou do jogador 2.
+;Depois de alguma destas rotinas ser executada, o programa retorna imediatamente para a rotina TRON.
+;		Entradas: R<1|2> = posicao actual do jogador <1|2>; R<3|4> = posicao actual do jogador <1|2>
+;		Saidas: ---
+;		Efeitos: Efectivam a proxima posicao
+P1_drt_abs:		INC		R1
+				MOV		R3, DIREITA
+				POP		R0
+				POP		R0
+				RET
+P1_baixo_abs:	ADD		R1, MUDA_LINHA
+				MOV		R3, BAIXO
+				POP		R0
+				POP		R0
+				RET
+P1_esq_abs:		DEC		R1
+				MOV		R3, ESQUERDA
+				POP		R0
+				POP		R0
+				RET
+P1_cima_abs:	SUB		R1, MUDA_LINHA
+				MOV		R3, CIMA
+				POP		R0
+				POP		R0
+				RET
+P2_drt_abs:		INC		R2
+				MOV		R4, DIREITA
+				POP		R0
+				POP		R0
+				RET
+P2_baixo_abs:	ADD		R2, MUDA_LINHA
+				MOV		R4, BAIXO
+				POP		R0
+				POP		R0
+				RET
+P2_esq_abs:		DEC		R2
+				MOV		R4, ESQUERDA
+				POP		R0
+				POP		R0
+				RET
+P2_cima_abs:	SUB		R2, MUDA_LINHA
+				MOV 	R4, CIMA
+				POP		R0
+				POP		R0
+				RET
+
+;ROTINA Colisoes: Verifica se algum dos jogadores colidiu (ou seja, se avancou para uma posicao de memoria que nao esta preenchida por um espaco).
+;		Entradas: R1 = posicao actual do jogador 1; R2 = posicao actual do jogador 2. (ambas as posicoes apos serem actualizadas.)
+;		Saidas: ---
+;		Efeitos: Decide se a partida devera terminar.
+Colisoes:		CMP		R1, R2
+				CALL.Z	P1_P2_colidem
+				PUSH	R1
+				CALL	JAN_to_MTX
+				POP		R5
+				PUSH	R2
+				CALL	JAN_to_MTX
+				POP		R6
+				MOV		R6, M[R6]
+				MOV		R5, M[R5]
+				CMP		R5, ESPACO
+				CALL.NZ	P1_colidiu
+				CMP		R6, ESPACO
+				CALL.NZ	P2_colidiu
+				RET
+				
+P1_colidiu:		INC		M[P1_FLAG_COLISAO]
+				RET
+P2_colidiu:		INC		M[P2_FLAG_COLISAO]
+				RET
+P1_P2_colidem:	INC		M[P1_FLAG_COLISAO]
+				INC		M[P2_FLAG_COLISAO]
+				RET
+
+;Inc_velocidade: Rotina que incrementa a velocidade de jogo.
+Inc_velocidade:	CMP		M[FLAG_NIVEL_1], R0
+				CALL.NZ	Nivel_2
+				CMP		M[FLAG_NIVEL_2], R0
+				CALL.NZ	Nivel_3
+				CMP		M[FLAG_NIVEL_3], R0
+				CALL.NZ	Nivel_4
+				CMP		M[FLAG_NIVEL_4], R0
+				CALL.NZ	Nivel_5
+				RET
+
+Nivel_1:		INC		M[FLAG_NIVEL_1]
+				MOV		M[FLAG_NIVEL_2], R0
+				MOV		M[FLAG_NIVEL_3], R0
+				MOV		M[FLAG_NIVEL_4], R0
+				MOV		M[FLAG_NIVEL_5], R0
+				MOV		R7, 7d
+				MOV		M[VALOR_TICK], R7
+				MOV		R7, 10d
+				MOV		M[CONTADOR_NIV], R7
+				MOV		M[LEDS], R0
+				RET
+Nivel_2:		INC		M[FLAG_NIVEL_2]
+				MOV		R7, 5d
+				MOV		M[VALOR_TICK], R7
+				MOV		R7, 10d
+				MOV		M[CONTADOR_NIV], R7
+				MOV		R7, 000Fh
+				MOV		M[LEDS], R7
+				MOV		M[FLAG_NIVEL_1], R0
+				POP		R0
+				RET
+Nivel_3:		INC		M[FLAG_NIVEL_3]
+				MOV		R7, 3d
+				MOV		M[VALOR_TICK], R7
+				MOV		R7, 20d
+				MOV		M[CONTADOR_NIV], R7
+				MOV		R7, 00FFh
+				MOV		M[LEDS], R7
+				MOV		M[FLAG_NIVEL_2], R0
+				POP		R0
+				RET
+Nivel_4:		INC		M[FLAG_NIVEL_4]
+				MOV		R7, 2d
+				MOV		M[VALOR_TICK], R7
+				MOV		R7, 20d
+				MOV		M[CONTADOR_NIV], R7
+				MOV		R7, 0FFFh
+				MOV		M[LEDS], R7
+				MOV		M[FLAG_NIVEL_3], R0
+				POP		R0
+				RET
+Nivel_5:		INC		M[FLAG_NIVEL_5]
+				MOV		R7, 1d
+				MOV		M[VALOR_TICK], R7
+				MOV		R7, FFFFh
+				MOV		M[CONTADOR_NIV], R7
+				MOV		M[LEDS], R7
+				MOV		M[FLAG_NIVEL_4], R0
+				POP		R0
+				RET
+
+Fim_de_partida:	PUSH	POS_MSG_FIN_1
+				PUSH	MSG_FIN_1
+				CALL	WRstrJAN
+				PUSH	POS_MSG_FIN_2
+				PUSH	MSG_FIN_2
+				CALL	WRstrJAN
+				MOV		R1, M[P1_FLAG_COLISAO]
+				MOV		R2, M[P2_FLAG_COLISAO]
+				TEST	R1, R2
+				CALL.NZ	Empate
+				CMP		R1, R0
+				CALL.Z	Vitoria_P1
+				CMP		R2, R0
+				CALL.Z	Vitoria_P2
+				RET
+
+;ROTINA Vitoria_P1: Rotina que garante a vitoria ao jogador 1 e atualiza o jogo concordantemente.
+;		Entradas: ---
+;		Saidas: ---
+;		Efeitos: Escreve a mensagem de vitoria correspondente ao jogador 1; incrementa no LCD o numero de vitorias do jogador 1.
+Vitoria_P1:		PUSH	R2
+				INC		M[VITORIAS_P1_1]
+				MOV		R1, M[VITORIAS_P1_1]
+				MOV		R2, M[VITORIAS_P1_2]
+				CALL	Transporta
+				MOV		R7, R1
+				CALL	Num_p_ASCII
+				PUSH	LCD_P1_1
+				PUSH	R7
+				CALL	WRcarLCD
+				MOV		R7, R2
+				CALL	Num_p_ASCII
+				PUSH	LCD_P1_2
+				PUSH	R7
+				CALL	WRcarLCD
+				POP		R2
+				RET
+
+;ROTINA Vitoria_P2: Rotina que garante a vitoria ao jogador 2 e atualiza o LCD concordantemente.
+;		Entradas: ---
+;		Saidas: ---
+;		Efeitos: Incrementa no LCD o numero de vitorias do jogador 2.
+Vitoria_P2:		INC		M[VITORIAS_P2_1]
+				MOV		R1, M[VITORIAS_P2_1]
+				MOV		R2, M[VITORIAS_P2_2]
+				CALL	Transporta
+				MOV		R7, R1
+				CALL	Num_p_ASCII
+				PUSH	LCD_P2_1
+				PUSH	R7
+				CALL	WRcarLCD
+				MOV		R7, R2
+				CALL	Num_p_ASCII
+				PUSH	LCD_P2_2
+				PUSH	R7
+				CALL	WRcarLCD
+				RET
+
+Empate:			CALL	Vitoria_P1
+				CALL	Vitoria_P2
+				POP		R0
+				RET
+
+;ROTINA Graficos: Rotina que escreve os limites do jogo e os avatares.
+;		Entradas: ---
+;		Saidas: ---
+;		Efeitos: Escreve toda a moldura de jogo e os avatares. Altera os registos R1, R2, R3 e R4 (sem consequencias).
+Graficos:		MOV		R1, CANTO_SUPESQ
+				MOV		R2, CANTO_INFESQ
+				MOV		R3, CAR_COLUNA
+				MOV		R4, MUDA_LINHA
+				CALL	WRcol				;Escreve a parede da esquerda
+	
+				MOV		R1, CANTO_SUPDIR
+				MOV		R2, CANTO_INFDIR
+				CALL 	WRcol				;Escreve a parede da direita
+					
+				MOV		R1, CANTO_SUPESQ
+				MOV		R2, CANTO_SUPDIR
+				MOV		R3, CAR_LINHA
+				MOV		R4, CAR_CANTO
+				CALL	WRlin				;Escreve a linha de cima
+
+				MOV		R1, CANTO_INFESQ
+				MOV		R2, CANTO_INFDIR
+				CALL	WRlin				;Escreve a linha de baixo
+				
+				PUSH	POS_INI_AV1
+				PUSH	AVATAR1
+				CALL	WRcarJAN			;Escreve o avatar do player 1.
+				PUSH	POS_INI_AV2
+				PUSH	AVATAR2				;Escreve o avatar do player 2.
+				CALL	WRcarJAN
+				RET
+
+;ROTINA WRCol: escreve uma coluna da moldura de jogo.
+;		Entradas: R1 = Canto inicial; R2 = Canto final; R3 = Carater de coluna; R4 = MUDA_LINHA
+;		Saidas: ---
+;		Efeitos: Escreve uma coluna.
+WRcol:			ADD		R1, R4				;Esta operacao muda de linha.
+                CMP		R1, R2				;Verifica se estamos no canto inferior direito
+				BR.Z	WRcol_EXIT
+                PUSH	R1
+                PUSH	R3
+                CALL	WRcarJAN
+                BR		WRcol
+WRcol_EXIT:		RET
+
+;WRlin: Rotina que escreve as linhas da moldura de jogo.
+;		Entradas:  R1 = Canto inicial; R2 = Canto final; R3 = Carater de linha; R4 = Carater de canto
+;		Saidas: ---
+;		Efeitos: Escreve uma linha.
+
+WRlin:			PUSH	R1
+				PUSH	R4
+				CALL	WRcarJAN
+WRlin_ciclo:	INC		R1
+				PUSH	R1
+				PUSH	R3
+				CALL	WRcarJAN
+				CMP		R1, R2
+				BR.NZ	WRlin_ciclo
+				PUSH	R1
+				PUSH	R4
+				CALL	WRcarJAN
+				RET
+
+;WRLCD_T: Rotina que escreve todo o template no LCD com 0s.
+;Entradas: R1 com o endereco do primeiro caracter a escrever ; R2 com FIM_TEXTO; R3 com 8000h (primeira posicao do cursor)
+;Saidas: ---	
+;Efeitos: Escreve o template no LCD.
+WRLCD_T:		CMP		M[R1], R2
+				BR.Z	WRLCD_T_EXIT
+				PUSH	R3
+				PUSH	M[R1]
+				CALL	WRcarLCD
+				INC		R3
+				INC		R1
+				BR		WRLCD_T
+WRLCD_T_EXIT:	RET
+
+;WRcarJan: Rotina que escreve um caracter na janela de texto.
+;Entradas: Recebe da pilha: M[SP+4] = O que escrever; M[SP+5] = Onde colocar o cursor.
+;Saidas: ---	
+;Efeitos: Escreve um carater na janela de texto.
+WRcarJAN:		PUSH	R1
+				PUSH	R2
+				MOV		R1, M[SP+4]
+				MOV		R2, M[SP+5]
+				MOV		M[P_JAN_CONT], R2
+				MOV		M[P_JAN_ESCR], R1
+				PUSH	R2
+				CALL	JAN_to_MTX
+				POP		R2
+				MOV		M[R2], R1
+				POP		R2
+				POP		R1
+				RETN	2
+
+;WRcarLCD: Rotina que escreve um caracter no LCD.
+;Entradas: Recebe da pilha: M[SP+4] = O que escrever; M[SP+5] = Onde colocar o cursor.
+;Saidas: ---
+;Efeitos: Escreve um carater no LCD.
+;NOTA: Esta rotina foi definida separadamente de WRcarJAN PROPOSITADAMENTE! 
+WRcarLCD:		PUSH	R1
+				PUSH	R2
+				MOV		R1, M[SP+4]
+				MOV		R2, M[SP+5]
+				MOV		M[P_LCD_CONT], R2
+				MOV		M[P_LCD_ESCR], R1
+				POP		R2
+				POP		R1
+				RETN	2
+
+;WRstrJAN: Rotina que escreve uma string na janela de texto.
+;Entradas: Recebe da pilha: M[SP+5] = Endereco do primeiro carater da string a escrever ; M[SP+6] = Onde colocar o cursor.
+;Saidas: ---
+;Efeitos: Escreve uma string na janela de texto.
+WRstrJAN:		PUSH	R1
+				PUSH	R2
+				PUSH	R3
+				MOV		R1, M[SP+5]
+				MOV		R2, M[SP+6]
+WRstrJAN_ciclo:	MOV		R3, M[R1]
+				CMP		R3, FIM_TEXTO
+				BR.Z	WRstrJAN_EXIT
+				PUSH	R2
+				PUSH	R3
+				CALL	WRcarJAN
+				INC		R1
+				INC		R2
+				BR		WRstrJAN_ciclo
+WRstrJAN_EXIT:	POP		R3
+				POP		R2
+				POP		R1
+				RETN	2
+
+;ROTINA Limpa_JAN:  que recebe um carater e escreve-o em toda a janela de texto e em todas as posicoes de memoria da MATRIZ.
+;Neste prorgrama escreve apenas um ESPACO.
+;Entradas: M[SP+5]: carater a escrever (espaco)
+;Saidas: ---
+;Efeitos: (acima)
+Limpa_JAN:		MOV		R1, R0
+				MOV		R2, 80d			;Contador de colunas escritas
+				MOV		R3, 24d			;Contador de linhas escritas
+Ciclo4:			PUSH	R1
+				PUSH	ESPACO
+				CALL	WRcarJAN
+				INC		R1
+				DEC		R2
+				CMP		R2, R0
+				BR.NZ	Ciclo4
+				MOV		R2, 80d
+				ADD		R1, MUDA_LINHA
+				MVBL	R1, R0
+				DEC		R3
+				CMP		R3, R0
+				BR.NZ	Ciclo4
+				RET	
+
+;Atualiza_cron: Rotina que actualiza o cronometro que conta o tempo de uma partida.
+;Entradas: N/A
+;Saidas: N/A
+;Efeitos: Guarda nas posicoes de memoria M[DISPLAY<1|2|3|4>] o tempo actual decorrido na partida, em decimal; Decrementa o contador de aumento de nivel.
+Atualiza_cron:	PUSH	R1
+				PUSH	R2
+				PUSH	R3
+				PUSH	R4
+				PUSH	R5
+				MOV		R5, 10
+				MOV		M[SEGUNDO], R5
+				INC		M[VALOR_DISPLAY1]
+				MOV		R1, M[VALOR_DISPLAY1]
+				MOV		R2, M[VALOR_DISPLAY2]
+				MOV		R3, M[VALOR_DISPLAY3]
+				MOV		R4, M[VALOR_DISPLAY4]
+				CALL	Transporta
+				MOV		M[VALOR_DISPLAY1], R1
+				MOV		M[VALOR_DISPLAY2], R2
+				MOV		M[VALOR_DISPLAY3], R3
+				MOV		M[VALOR_DISPLAY4], R4
+				MOV     M[DISPLAY1], R1
+				MOV 	M[DISPLAY2], R2
+				MOV     M[DISPLAY3], R3
+				MOV		M[DISPLAY4], R4
+				DEC		M[CONTADOR_NIV]
+				POP		R5
+				POP		R4
+				POP		R3
+				POP		R2
+				POP		R1
+				RET
+
+
+;ROTINA transporta: Rotina que mantem os numeros no display em decimal
+;		Entradas: R1 = primeiro numero; R2 = segundo numero; R3 = terceiro numero
+;		Saidas: N/A
+;		Efeitos: Cada um incrementa a casa correspondente e reinicia a anterior.
+
+Transporta:		CMP		R1, R5
+				CALL.NN  IncP2_ResetP1
+				CMP     R2, R5
+				CALL.NN  IncP3_ResetP2
+				CMP     R3, R5
+				CALL.NN  IncP4_ResetP3
+				RET
+
+;ROTINAS IncD<2|3|4>_Reset<1|2|3>: Rotinas de controlo dos displays. Mantem o cronometro a contar em decimal em vez de hexadecimal.
+;		Entradas: R<1|2|3|4> com o valor presente na respectiva casa dos displays.
+;		Saidas: N/A
+;		Efeitos: Cada um incrementa a casa correspondente e reinicia a anterior.
+IncP2_ResetP1: 	SUB		R1, R5
+				INC		R2
+				RET
+IncP3_ResetP2: 	SUB		R2, R5
+				INC		R3
+				RET
+IncP4_ResetP3:	SUB		R3, R5
+				INC		R4
+				RET
+
+;ROTINA JAN_to_MTX: Converte uma coordenada da janela de texto na sua correspondente coordenada nas posicoes de memoria da MATRIZ.
+;Salvaguarda registos pois e utilizada na rotina TRON. Utiliza uma instrucao MUL.
+;		Entradas: M[SP+5] com uma coordenada da janela de texto.
+;		Saidas: M[SP+1] com a coordenada acima convertida para a MATRIZ.
+;		Efeitos: N/A
+JAN_to_MTX:		PUSH	R1
+				PUSH	R2
+				PUSH	R3
+				MOV		R1, R0
+				MVBL	R1, M[SP+5]
+				MVBH	R2, M[SP+5]
+				SHR		R2, 8
+				MOV		R3, 80
+				MUL		R2, R3
+				ENI
+				ADD		R1, R2
+				ADD		R1, R3
+				ADD		R1, MATRIZ
+				MOV		M[SP+5], R1
+				POP		R3
+				POP		R2
+				POP		R1
+				RET						;Fica na pilha o valor de saida em SP+1
+
+
+;Reinicia: rotina que reinicia todas as posicoes de memoria relevantes ao jogo.
+Reinicia:		CALL		Nivel_1
+				MOV			R1, 10d
+				MOV			M[SEGUNDO], R1
+				MOV			M[VALOR_DISPLAY1], R0
+				MOV			M[VALOR_DISPLAY2], R0
+				MOV			M[VALOR_DISPLAY3], R0
+				MOV			M[VALOR_DISPLAY4], R0
+				MOV			M[P1_FLAG_ESQ], R0
+				MOV			M[P1_FLAG_DRT], R0
+				INC			M[P1_FLAG_NON]
+				MOV			M[P2_FLAG_ESQ], R0
+				MOV			M[P2_FLAG_DRT], R0
+				INC			M[P2_FLAG_NON]
+				MOV			M[P1_FLAG_COLISAO], R0
+				MOV			M[P2_FLAG_COLISAO], R0
+				RET
+
+;Adiciona_ao_LCD: Rotina que adiciona o tempo dos displays ao tempo maximo do LCD
+Adiciona_ao_LCD:MOV			R1, M[VALOR_LCD1]
+				MOV			R2, M[VALOR_LCD2]
+				MOV			R3, M[VALOR_LCD3]
+				MOV			R4, M[VALOR_LCD4]
+				ADD			R1, M[VALOR_DISPLAY1]
+				ADD			R2, M[VALOR_DISPLAY2]
+				ADD			R3, M[VALOR_DISPLAY3]
+				ADD			R4, M[VALOR_DISPLAY4]
+				MOV			R5, 10
+				CALL		Transporta
+				MOV			M[VALOR_LCD1], R1
+				MOV			M[VALOR_LCD2], R2
+				MOV			M[VALOR_LCD3], R3
+				MOV			M[VALOR_LCD4], R4
+				MOV			R7, R1
+				CALL		Num_p_ASCII
+				PUSH		LCD_s_1
+				PUSH		R7
+				CALL		WRcarLCD
+				MOV			R7, R2
+				CALL		Num_p_ASCII
+				PUSH		LCD_s_2
+				PUSH		R7
+				CALL		WRcarLCD
+				MOV			R7, R3
+				CALL		Num_p_ASCII
+				PUSH		LCD_s_3
+				PUSH		R7
+				CALL		WRcarLCD
+				MOV			R7, R4
+				CALL		Num_p_ASCII
+				PUSH		LCD_s_4
+				PUSH		R7
+				CALL		WRcarLCD
+				RET
+
+;ROTINA Num_p_ASCII. Rotina que converte um numero no seu correspondente em ASCII.
+
+Num_p_ASCII:	CMP		R7, R0
+				CALL.Z	Zero
+				CMP		R7, 1
+				CALL.Z	Um
+				CMP		R7, 2
+				CALL.Z	Dois
+				CMP		R7, 3
+				CALL.Z	Tres
+				CMP		R7, 4
+				CALL.Z	Quatro
+				CMP		R7, 5
+				CALL.Z	Cinco
+				CMP		R7, 6
+				CALL.Z	Seis
+				CMP		R7, 7
+				CALL.Z	Sete
+				CMP		R7, 8
+				CALL.Z	Oito
+				CMP		R7, 9
+				CALL.Z	Nove
+				RET
+
+Zero:			MOV		R7, '0'
+				POP		R0
+				RET
+Um:				MOV 	R7, '1'
+				POP		R0
+				RET
+Dois:			MOV 	R7, '2'
+				POP		R0
+				RET
+Tres:			MOV 	R7, '3'
+				POP		R0
+				RET
+Quatro:			MOV 	R7, '4'
+				POP		R0
+				RET
+Cinco:			MOV 	R7, '5'
+				POP		R0
+				RET
+Seis:			MOV 	R7, '6'
+				POP		R0
+				RET
+Sete:			MOV 	R7, '7'
+				POP		R0
+				RET
+Oito:			MOV 	R7, '8'
+				POP		R0
+				RET
+Nove:			MOV 	R7, '9'
+				POP		R0
+				RET
+
+;ROTINAS DE INTERRUPCAO P<1|2>_escolhe_<drt|baixo|esq|cima|>: Activam uma flag em memoria que indica qual foi a ultima direccao RELATIVA pedida pelo jogador.
+; Nota: drt == direita; non == nenhuma.
+;		Entradas: N/A
+;		Saidas: N/A
+P1_escolhe_drt:	INC		M[P1_FLAG_DRT]
+				MOV		M[P1_FLAG_ESQ], R0
+				MOV		M[P1_FLAG_NON], R0
+				RTI				
+P1_escolhe_esq:	INC		M[P1_FLAG_ESQ]
+				MOV		M[P1_FLAG_DRT], R0
+				MOV		M[P1_FLAG_NON], R0
+				RTI		
+P1_escolhe_non:	INC		M[P1_FLAG_NON]
+				MOV		M[P1_FLAG_DRT], R0
+				MOV		M[P1_FLAG_ESQ], R0
+				RTI
+P2_escolhe_drt:	INC		M[P2_FLAG_DRT]
+				MOV		M[P2_FLAG_ESQ], R0
+				MOV		M[P2_FLAG_NON], R0
+				RTI
+P2_escolhe_esq:	INC		M[P2_FLAG_ESQ]
+				MOV		M[P2_FLAG_DRT], R0
+				MOV		M[P2_FLAG_NON], R0
+				RTI			
+P2_escolhe_non:	INC		M[P2_FLAG_NON]
+				MOV		M[P2_FLAG_DRT], R0
+				MOV		M[P2_FLAG_ESQ], R0
+				RTI
+
+;ROTINA DE INTERRUPCAO Start: Incrementa a flag que inicia um novo jogo de TRON. A flag devera ser resposta com R0 imediatamente a seguir.
+Start:			INC		M[FLAG_I1]
+				RTI
+
+;ROTINA DE INTERRUPCAO Conta_cem_ms: Esta rotina e activada a cada 100 ms (uma unidade do temporizador). Conta a passagem de cem milisegundos.
+;Esta e a unica rotina responsavel pela sincronizacao de todos os eventos de jogo.
+;Em cada passagem de 100 ms o temporizador e reativado e decrementa uma unidade dos contadores que sincronizam o jogo.
+Conta_cem_ms:	INC		M[P_TEMP_UNI]
+				INC 	M[P_TEMP_ACT]
+				DEC		M[SEGUNDO]
+				DEC		M[CONTADOR_TICK]
+				RTI
+
+
+;MESTRE: Parte principal do codigo que estrutura a relacao entre as varias rotinas que formam o jogo.
+Mestre:			ENI
+				MOV		R1, M_1
+				MOV		M[MASCARAS], R1
+EsperaI1:		CMP		M[FLAG_I1], R0
+				BR.Z	EsperaI1
+				MOV		M[FLAG_I1], R0
+				CALL	Reinicia
+				CALL	Limpa_JAN
+				CALL	Graficos
+				INC		M[P_TEMP_UNI]
+				INC		M[P_TEMP_ACT]
+				MOV		R1, M_JOGO
+				MOV		M[MASCARAS], R1
+				CALL	TRON					; ROTINA PRINCIPAL DE JOGO!
+				CALL	Fim_de_partida
+				CALL	Adiciona_ao_LCD
+				JMP		Mestre
+
+
+
